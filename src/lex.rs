@@ -1,3 +1,8 @@
+use std::str::FromStr;
+
+use strum::IntoEnumIterator;
+use strum_macros::{EnumIter, EnumString};
+
 pub struct Lexer {
     pub source: Vec<char>,
     pub current_char: Option<char>,
@@ -10,7 +15,7 @@ pub struct Token {
     pub kind: TokenType,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, EnumIter, EnumString)]
 pub enum TokenType {
     EOF,
     NEWLINE,
@@ -175,7 +180,60 @@ impl Lexer {
                 }
                 '\n' => token = Some(Token::new(current_char.into(), TokenType::NEWLINE)),
                 '\0' => token = Some(Token::new(current_char.into(), TokenType::EOF)),
-                _ => self.abort_operation(format!("Unknown token:  {}", current_char)),
+                _ => {
+                    //handle number, identifier, other operators
+                    //digit token
+                    if current_char.is_digit(10) {
+                        let start_pos = self.current_pos;
+
+                        while self.peek().is_digit(10) {
+                            self.next_char();
+                        }
+
+                        //Decimal value
+                        if self.peek() == '.' {
+                            self.next_char();
+
+                            if !self.peek().is_digit(10) {
+                                self.abort_operation("Illegal character in number".into());
+                            }
+
+                            while self.peek().is_digit(10) {
+                                self.next_char();
+                            }
+                        }
+
+                        let text: String = self.source
+                            [start_pos as usize..self.current_pos as usize]
+                            .iter()
+                            .collect();
+
+                        token = Some(Token::new(text, TokenType::NUMBER));
+                    } else if current_char.is_alphabetic() {
+                        //identifier token
+                        //leading character is alphabetic, means identifier
+                        let start_pos = self.current_pos;
+                        while self.peek().is_alphanumeric() {
+                            self.next_char();
+                        }
+
+                        let text: String = self.source
+                            [start_pos as usize..=self.current_pos as usize]
+                            .iter()
+                            .collect();
+
+                        //matching of keyword
+                        if let Some(keyword) = self.check_if_keyword(text.clone()) {
+                            token = Some(Token::new(text.into(), keyword));
+                        } else {
+                            token = Some(Token::new(text.into(), TokenType::IDENT));
+                        }
+
+                        //check if token text exists in token types
+                    } else {
+                        self.abort_operation(format!("Unknown token:  {}", current_char))
+                    }
+                }
             }
         };
 
@@ -202,6 +260,23 @@ impl Lexer {
             while self.current_char != Some('\n') {
                 self.next_char();
             }
+        }
+    }
+
+    fn check_if_keyword(&mut self, text: String) -> Option<TokenType> {
+        match TokenType::from_str(text.as_str()) {
+            Ok(value) => {
+                for kind in TokenType::iter() {
+                    if kind == value {
+                        return Some(kind);
+                    }
+                }
+                //return None if no values found
+                //i don't know why this is a thing
+                None
+            }
+            //parsing error, return None
+            Err(_) => return None,
         }
     }
 }
