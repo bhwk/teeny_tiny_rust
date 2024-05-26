@@ -89,6 +89,7 @@ impl Lexer {
 
     pub fn get_token(&mut self) -> Option<Token> {
         self.skip_whitespace();
+        self.skip_comments();
 
         let mut token: Option<Token> = None;
 
@@ -144,6 +145,34 @@ impl Lexer {
                         self.abort_operation(format!("Expected !=, got ! {}", next_char));
                     }
                 }
+                '\"' => {
+                    // get characters
+                    self.next_char();
+                    let start_pos = self.current_pos;
+
+                    while self.current_char != Some('\"') {
+                        // Do not allow special characters
+                        if self.current_char == Some('\r')
+                            || self.current_char == Some('\t')
+                            || self.current_char == Some('\n')
+                            || self.current_char == Some('\\')
+                            || self.current_char == Some('%')
+                        {
+                            self.abort_operation(format!(
+                                "Illegal character in string: {}",
+                                self.current_char.unwrap()
+                            ))
+                        }
+                        self.next_char();
+                    }
+
+                    // slice Vec<char> from start to current
+                    let text = self.source[start_pos as usize..self.current_pos as usize]
+                        .iter()
+                        .collect();
+
+                    token = Some(Token::new(text, TokenType::STRING));
+                }
                 '\n' => token = Some(Token::new(current_char.into(), TokenType::NEWLINE)),
                 '\0' => token = Some(Token::new(current_char.into(), TokenType::EOF)),
                 _ => self.abort_operation(format!("Unknown token:  {}", current_char)),
@@ -165,6 +194,14 @@ impl Lexer {
             || self.current_char == Some('\r')
         {
             self.next_char();
+        }
+    }
+
+    fn skip_comments(&mut self) {
+        if self.current_char == Some('#') {
+            while self.current_char != Some('\n') {
+                self.next_char();
+            }
         }
     }
 }
