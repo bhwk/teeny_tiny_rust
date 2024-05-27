@@ -204,7 +204,7 @@ impl Lexer {
                         }
 
                         let text: String = self.source
-                            [start_pos as usize..self.current_pos as usize]
+                            [start_pos as usize..=self.current_pos as usize]
                             .iter()
                             .collect();
 
