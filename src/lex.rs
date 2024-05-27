@@ -9,13 +9,13 @@ pub struct Lexer {
     pub current_pos: isize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub text: String,
     pub kind: TokenType,
 }
 
-#[derive(Debug, PartialEq, Eq, EnumIter, EnumString)]
+#[derive(Debug, PartialEq, Eq, EnumIter, EnumString, Clone)]
 pub enum TokenType {
     EOF,
     NEWLINE,
