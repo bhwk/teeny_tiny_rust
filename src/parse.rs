@@ -1,9 +1,13 @@
 use crate::lex::{Lexer, Token, TokenType};
+use std::collections::HashSet;
 
 pub struct Parser {
     lexer: Lexer,
     current_token: Option<Token>,
     peek_token: Option<Token>,
+    symbols: HashSet<String>,
+    labels_declared: HashSet<String>,
+    labels_gotoed: HashSet<String>,
 }
 
 impl Parser {
@@ -12,6 +16,9 @@ impl Parser {
             lexer,
             current_token: None,
             peek_token: None,
+            symbols: HashSet::new(),
+            labels_declared: HashSet::new(),
+            labels_gotoed: HashSet::new(),
         };
 
         //initialize current and peek token
@@ -60,6 +67,12 @@ impl Parser {
         while !self.check_token(TokenType::EOF) {
             self.statement();
         }
+
+        for label in &self.labels_gotoed {
+            if !self.labels_declared.contains(label) {
+                self.abort_operation(format!("Attempting to GOTO to undeclared label: {}", label))
+            }
+        }
     }
 
     fn statement(&mut self) {
@@ -106,6 +119,20 @@ impl Parser {
             //LABEL ident
             println!("STATEMENT-LABEL");
             self.next_token();
+
+            //if insert returns false, it means that the value
+            // already exists in the set. abort operation if so.
+            // clone because insert consumes the value
+            if !self
+                .labels_declared
+                .insert(self.current_token.clone().unwrap().text)
+            {
+                self.abort_operation(format!(
+                    "Label already exists {}",
+                    self.current_token.as_ref().unwrap().text
+                ))
+            }
+
             self.match_token(TokenType::IDENT);
         } else if self.check_token(TokenType::GOTO) {
             //GOTO ident
@@ -116,6 +143,14 @@ impl Parser {
             // LET ident = expression
             println!("STATEMENT-LET");
             self.next_token();
+
+            if !self
+                .symbols
+                .contains(&self.current_token.as_ref().unwrap().text)
+            {
+                self.symbols
+                    .insert(self.current_token.clone().unwrap().text);
+            }
             self.match_token(TokenType::IDENT);
             self.match_token(TokenType::EQ);
 
@@ -123,6 +158,15 @@ impl Parser {
         } else if self.check_token(TokenType::INPUT) {
             println!("STATEMENT-INPUT");
             self.next_token();
+
+            if !self
+                .symbols
+                .contains(&self.current_token.as_ref().unwrap().text)
+            {
+                self.symbols
+                    .insert(self.current_token.clone().unwrap().text);
+            }
+
             self.match_token(TokenType::IDENT);
         } else {
             self.abort_operation(format!(
@@ -144,10 +188,99 @@ impl Parser {
     }
 
     fn expression(&mut self) {
-        todo!()
+        // expression ::= term OPERATOR term
+
+        println!("EXPRESSION");
+
+        self.term();
+
+        // can have 0 or more OPERATOR and expressions
+
+        while self.check_token(TokenType::PLUS) || self.check_token(TokenType::MINUS) {
+            self.next_token();
+            self.term();
+        }
+    }
+
+    fn term(&mut self) {
+        println!("TERM");
+
+        self.unary();
+        // can have 0 or more expressions
+
+        while self.check_token(TokenType::ASTERISK) || self.check_token(TokenType::SLASH) {
+            self.next_token();
+            self.unary()
+        }
+    }
+
+    fn unary(&mut self) {
+        // unary::= + - primary
+        println!("UNARY");
+
+        //optional unary
+
+        if self.check_token(TokenType::PLUS) || self.check_token(TokenType::MINUS) {
+            self.next_token();
+        }
+        self.primary();
+    }
+
+    fn primary(&mut self) {
+        //primary ::= number |ident
+
+        println!("PRIMARY ({})", self.current_token.as_ref().unwrap().text);
+
+        if self.check_token(TokenType::NUMBER) {
+            self.next_token();
+        } else if self.check_token(TokenType::IDENT) {
+            if !self
+                .symbols
+                .contains(&self.current_token.as_ref().unwrap().text)
+            {
+                self.abort_operation(format!(
+                    "Referencing variable before assignment: {} ",
+                    self.current_token.clone().unwrap().text
+                ))
+            }
+            self.next_token();
+        } else {
+            self.abort_operation(format!(
+                "Unexpected token at {}",
+                self.current_token.as_ref().unwrap().text
+            ))
+        }
     }
 
     fn comparison(&mut self) {
-        todo!()
+        //comparison ::= expression
+
+        println!("COMPARISON");
+
+        self.expression();
+
+        if self.is_comparison_operator() {
+            self.next_token();
+            self.expression();
+        } else {
+            self.abort_operation(format!(
+                "Expected comparison operator at: {}",
+                self.current_token.as_ref().unwrap().text
+            ))
+        }
+
+        while self.is_comparison_operator() {
+            self.next_token();
+            self.expression();
+        }
+    }
+
+    fn is_comparison_operator(&mut self) -> bool {
+        return self.check_token(TokenType::GT)
+            || self.check_token(TokenType::GTEQ)
+            || self.check_token(TokenType::LT)
+            || self.check_token(TokenType::LTEQ)
+            || self.check_token(TokenType::EQEQ)
+            || self.check_token(TokenType::NOTEQ);
     }
 }
