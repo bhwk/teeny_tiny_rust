@@ -1,8 +1,11 @@
+use crate::emit::Emitter;
 use crate::lex::{Lexer, Token, TokenType};
 use std::collections::HashSet;
+use std::fmt::format;
 
 pub struct Parser {
     lexer: Lexer,
+    pub emitter: Emitter,
     current_token: Option<Token>,
     peek_token: Option<Token>,
     symbols: HashSet<String>,
@@ -11,9 +14,10 @@ pub struct Parser {
 }
 
 impl Parser {
-    pub fn new(lexer: Lexer) -> Parser {
+    pub fn new(lexer: Lexer, emitter: Emitter) -> Parser {
         let mut parser = Parser {
             lexer,
+            emitter,
             current_token: None,
             peek_token: None,
             symbols: HashSet::new(),
@@ -57,8 +61,10 @@ impl Parser {
         panic!("Error. {message}")
     }
 
+    // program::={statement}
     pub fn program(&mut self) {
-        println!("PROGRAM");
+        self.emitter.header_line("#include <stdio.h>".into());
+        self.emitter.header_line("int main(void){".into());
 
         while self.check_token(TokenType::NEWLINE) {
             self.next_token();
@@ -67,6 +73,10 @@ impl Parser {
         while !self.check_token(TokenType::EOF) {
             self.statement();
         }
+
+        //return on program end
+        self.emitter.emit_line("return 0;".into());
+        self.emitter.emit_line("}".into());
 
         for label in &self.labels_gotoed {
             if !self.labels_declared.contains(label) {
@@ -80,44 +90,53 @@ impl Parser {
 
         if self.check_token(TokenType::PRINT) {
             // PRINT (expression | string)
-            println!("STATEMENT-PRINT");
             self.next_token();
 
             if self.check_token(TokenType::STRING) {
-                // string
+                // string, print string
+                self.emitter.emit_line(format!(
+                    "printf(\"{}\\n\");",
+                    self.current_token.as_ref().unwrap().text,
+                ));
+
                 self.next_token();
             } else {
-                self.expression()
+                self.emitter.emit(format!("printf(\"%.2f\\n\", (float)("));
+                self.expression();
+                self.emitter.emit_line("));".into());
             }
         } else if self.check_token(TokenType::IF) {
             // IF comparison THEN statement ENDIF
-            println!("STATEMENT-IF");
             self.next_token();
+            self.emitter.emit("if(".into());
             self.comparison();
 
             self.match_token(TokenType::THEN);
             self.nl();
+            self.emitter.emit_line(") {".into());
 
             while !self.check_token(TokenType::ENDIF) {
                 self.statement();
             }
             self.match_token(TokenType::ENDIF);
+            self.emitter.emit_line("}".into());
         } else if self.check_token(TokenType::WHILE) {
             // WHILE comparison REPEAT statement ENDWHILE
-            println!("STATEMENT-WHILE");
             self.next_token();
+            self.emitter.emit("while(".into());
             self.comparison();
 
             self.match_token(TokenType::REPEAT);
             self.nl();
+            self.emitter.emit_line("){".into());
 
             while !self.check_token(TokenType::ENDWHILE) {
                 self.statement();
             }
             self.match_token(TokenType::ENDWHILE);
+            self.emitter.emit_line("}".into());
         } else if self.check_token(TokenType::LABEL) {
             //LABEL ident
-            println!("STATEMENT-LABEL");
             self.next_token();
 
             //if insert returns false, it means that the value
@@ -133,15 +152,21 @@ impl Parser {
                 ))
             }
 
+            self.emitter
+                .emit_line(format!("{}:", self.current_token.as_ref().unwrap().text));
             self.match_token(TokenType::IDENT);
         } else if self.check_token(TokenType::GOTO) {
             //GOTO ident
-            println!("STATEMENT-GOTO");
             self.next_token();
+            self.labels_gotoed
+                .insert(self.current_token.clone().unwrap().text);
+            self.emitter.emit_line(format!(
+                "goto {};",
+                self.current_token.as_ref().unwrap().text
+            ));
             self.match_token(TokenType::IDENT);
         } else if self.check_token(TokenType::LET) {
             // LET ident = expression
-            println!("STATEMENT-LET");
             self.next_token();
 
             if !self
@@ -150,23 +175,48 @@ impl Parser {
             {
                 self.symbols
                     .insert(self.current_token.clone().unwrap().text);
+                self.emitter.header_line(format!(
+                    "float {};",
+                    self.current_token.as_ref().unwrap().text
+                ));
             }
+            self.emitter
+                .emit(format!("{} = ", self.current_token.as_ref().unwrap().text));
             self.match_token(TokenType::IDENT);
             self.match_token(TokenType::EQ);
 
             self.expression();
+            self.emitter.emit_line(";".into());
         } else if self.check_token(TokenType::INPUT) {
-            println!("STATEMENT-INPUT");
             self.next_token();
 
+            //if variable doesn't exist declare in symbols set
             if !self
                 .symbols
                 .contains(&self.current_token.as_ref().unwrap().text)
             {
                 self.symbols
                     .insert(self.current_token.clone().unwrap().text);
+                self.emitter.header_line(format!(
+                    "float {};",
+                    self.current_token.as_ref().unwrap().text
+                ));
             }
 
+            //emit scanf but also validate input.
+            //if invalid set the variable to 0 and clear input
+            self.emitter.emit_line(format!(
+                "if(0 == scanf(\"%f\", &{})) {}",
+                self.current_token.as_ref().unwrap().text,
+                "{"
+            ));
+            self.emitter.emit_line(format!(
+                "{} = 0;",
+                self.current_token.as_ref().unwrap().text
+            ));
+            self.emitter.emit("scanf(\"%".into());
+            self.emitter.emit_line("*s\");".into());
+            self.emitter.emit_line("}".into());
             self.match_token(TokenType::IDENT);
         } else {
             self.abort_operation(format!(
@@ -178,8 +228,6 @@ impl Parser {
         self.nl();
     }
     fn nl(&mut self) {
-        println!("NEWLINE");
-
         // require at least 1 newline
         self.match_token(TokenType::NEWLINE);
         while self.check_token(TokenType::NEWLINE) {
@@ -190,25 +238,22 @@ impl Parser {
     fn expression(&mut self) {
         // expression ::= term OPERATOR term
 
-        println!("EXPRESSION");
-
         self.term();
 
         // can have 0 or more OPERATOR and expressions
-
         while self.check_token(TokenType::PLUS) || self.check_token(TokenType::MINUS) {
+            self.emitter.emit(self.current_token.clone().unwrap().text);
             self.next_token();
             self.term();
         }
     }
 
     fn term(&mut self) {
-        println!("TERM");
-
         self.unary();
         // can have 0 or more expressions
 
         while self.check_token(TokenType::ASTERISK) || self.check_token(TokenType::SLASH) {
+            self.emitter.emit(self.current_token.clone().unwrap().text);
             self.next_token();
             self.unary()
         }
@@ -216,11 +261,9 @@ impl Parser {
 
     fn unary(&mut self) {
         // unary::= + - primary
-        println!("UNARY");
-
         //optional unary
-
         if self.check_token(TokenType::PLUS) || self.check_token(TokenType::MINUS) {
+            self.emitter.emit(self.current_token.clone().unwrap().text);
             self.next_token();
         }
         self.primary();
@@ -228,10 +271,8 @@ impl Parser {
 
     fn primary(&mut self) {
         //primary ::= number |ident
-
-        println!("PRIMARY ({})", self.current_token.as_ref().unwrap().text);
-
         if self.check_token(TokenType::NUMBER) {
+            self.emitter.emit(self.current_token.clone().unwrap().text);
             self.next_token();
         } else if self.check_token(TokenType::IDENT) {
             if !self
@@ -243,6 +284,7 @@ impl Parser {
                     self.current_token.clone().unwrap().text
                 ))
             }
+            self.emitter.emit(self.current_token.clone().unwrap().text);
             self.next_token();
         } else {
             self.abort_operation(format!(
@@ -255,11 +297,10 @@ impl Parser {
     fn comparison(&mut self) {
         //comparison ::= expression
 
-        println!("COMPARISON");
-
         self.expression();
 
         if self.is_comparison_operator() {
+            self.emitter.emit(self.current_token.clone().unwrap().text);
             self.next_token();
             self.expression();
         } else {
@@ -270,6 +311,7 @@ impl Parser {
         }
 
         while self.is_comparison_operator() {
+            self.emitter.emit(self.current_token.clone().unwrap().text);
             self.next_token();
             self.expression();
         }

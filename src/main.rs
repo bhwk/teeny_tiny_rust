@@ -1,7 +1,9 @@
+use emit::Emitter;
 use lex::Lexer;
 use parse::Parser;
 use std::{env, fs, io::Read};
 
+mod emit;
 mod lex;
 mod parse;
 
@@ -21,9 +23,10 @@ fn main() {
     }
 
     let lexer = Lexer::new(source);
-    let mut parser = Parser::new(lexer);
+    let emitter = Emitter::new("out.c".to_string());
+    let mut parser = Parser::new(lexer, emitter);
 
-    parser.program();
-
+    parser.program(); //start parser
+    parser.emitter.write_file(); // write output to file
     println!("Parsing completed")
 }
